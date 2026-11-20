@@ -1,0 +1,60 @@
+{
+ "title": "Road to the platinum",
+ "intro": "Seven stages, built from the official descriptions. The order protects everything with a story window first, then sweeps the map, and leaves the 100% audit for last.",
+ "pointOfNoReturn": {
+  "before": "Before the final mission",
+  "title": "Point of no return",
+  "body": "Save in a new slot before you launch the final mission. Every stranger strand, partner run and choice beat in stages 2 and 3 has to be finished by then; after the credits those offers are gone."
+ },
+ "stages": [
+  {
+   "id": 1,
+   "title": "Story run — Chapters 1 to 4",
+   "kicker": "Unmissable",
+   "note": "Play the campaign first: it unlocks the map, the partner, the businesses and most activities. Each chapter trophy and each named mission trophy is a completion flag, so nothing here can be lost once the mission is done. Tick them as they land.",
+   "why": "12 trophies, including the story's gold."
+  },
+  {
+   "id": 2,
+   "title": "Stranger strands",
+   "kicker": "Missable window",
+   "note": "Six named strands and the silver for eight completed strands. Run each line as its markers appear and finish it before Chapter 4 closes. This is the stage players most often lose to the endgame.",
+   "why": "6 trophies, all chapter-bound."
+  },
+  {
+   "id": 3,
+   "title": "Partner, choices and one-off moments",
+   "kicker": "Missable window",
+   "note": "The partner wanted-level runs, the story-choice bronzes and the flavour beats. Do them while the story is live and keep a save before each one-time scene.",
+   "why": "7 trophies with a story window."
+  },
+  {
+   "id": 4,
+   "title": "Collectibles sweep",
+   "kicker": "Counted",
+   "note": "18 meditation spots, 3 card sets, 100 WAiNK check-ins, 100 vehicles, 52 areas, 8 garages and 10 app registrations. Route by district and let one drive feed several counters.",
+   "why": "7 trophies, all with counts."
+  },
+  {
+   "id": 5,
+   "title": "Activities",
+   "kicker": "Skill and grind",
+   "note": "One round of each of the nine activity types first, then the long ones: 250 stunts, 42 shooting-range golds, 14 drone-race wins, 20 race wins, plus fishing, arcade and bowling.",
+   "why": "11 trophies."
+  },
+  {
+   "id": 6,
+   "title": "Crime and challenges",
+   "kicker": "Free roam",
+   "note": "Five bank vaults, an armored truck, a silent jewelry job, nine gang operations, 50 challenges, the two money counters and the VCIA escape. Heist income funds the shopping trophies.",
+   "why": "10 trophies."
+  },
+  {
+   "id": 7,
+   "title": "100% and the platinum",
+   "kicker": "The audit",
+   "note": "The pause-menu completion audit is the final word. Clear whatever it still lists, then the platinum arrives on its own.",
+   "why": "2 trophies: the 100% gold and the platinum."
+  }
+ ]
+}
