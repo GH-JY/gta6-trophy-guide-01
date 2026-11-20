@@ -3,9 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leonida Ledger — GTA VI trophy guide &amp; tracker</title>
-<meta name="description" content="An offline guide and progress tracker for all 55 Grand Theft Auto VI PlayStation 5 trophies: guides with sources, a roadmap to the platinum, missable windows, filters and a spoiler shield.">
+<title>Leonida Ledger — GTA VI trophy guide & tracker</title>
+<meta name="description" content="An offline guide and tracker for all 55 Grand Theft Auto VI PlayStation 5 trophies: original routes, a seven-stage roadmap, missable windows, filters, a spoiler shield and saved progress.">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#060911">
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 </head>
 <body data-view="checklist">
@@ -17,26 +19,27 @@
     <span class="brand-mark" aria-hidden="true">LL</span>
     <span class="brand-text">
       <span class="brand-name">Leonida Ledger</span>
-      <span class="brand-sub">GTA VI trophy guide &amp; tracker</span>
+      <span class="brand-sub">GTA VI · 55 trophies · offline</span>
     </span>
   </div>
   <nav class="tabs" aria-label="Screens">
-    <button class="tab is-active" type="button" data-view="checklist">Checklist</button>
+    <button class="tab is-active" type="button" data-view="checklist" aria-current="page">Checklist</button>
     <button class="tab" type="button" data-view="roadmap">Roadmap</button>
     <button class="tab" type="button" data-view="missables">Missables</button>
     <button class="tab" type="button" data-view="method">Method</button>
   </nav>
-  <div class="progress-chip" id="progress-chip" aria-live="polite"></div>
+  <div class="progress-chip" id="progress-chip"></div>
 </header>
 
-<section class="toolbar" aria-label="Filters, spoiler setting and progress tools">
-  <div class="toolbar-row">
+<section class="toolbar" aria-label="Trophy filters and progress tools">
+  <div class="toolbar-row toolbar-main">
     <label class="search">
-      <span class="sr-only">Search trophies</span>
-      <input id="search" type="search" placeholder="Search a trophy, a description or a guide" autocomplete="off" spellcheck="false">
+      <span class="sr-only">Search trophies by name, description or guide</span>
+      <input id="search" type="search" placeholder="Search a trophy, description or guide" autocomplete="off" spellcheck="false" aria-keyshortcuts="/">
+      <kbd class="search-kbd" aria-hidden="true">/</kbd>
     </label>
     <label class="select-wrap">
-      <span>Grade</span>
+      <span class="sr-only">Filter by grade</span>
       <select id="grade-filter">
         <option value="all">All grades</option>
         <option value="platinum">Platinum</option>
@@ -45,33 +48,48 @@
         <option value="bronze">Bronze</option>
       </select>
     </label>
-    <label class="switch" title="Hide the names and descriptions of unearned story trophies">
-      <input id="spoiler-toggle" type="checkbox">
+    <label class="switch" title="Hide the trophies you have already earned">
+      <input id="hide-earned" type="checkbox">
       <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-      <span class="switch-text">Spoiler shield</span>
+      <span class="switch-label">Hide earned</span>
+    </label>
+    <label class="switch" title="Hide the names and guides of unearned story trophies">
+      <input id="spoiler-toggle" type="checkbox" aria-keyshortcuts="s">
+      <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+      <span class="switch-label">Spoiler shield</span>
     </label>
     <div class="tool-actions">
-      <button id="export-btn" class="btn btn-small" type="button">Export</button>
-      <label class="btn btn-small btn-ghost import-label">Import<input id="import-input" type="file" accept="application/json,.json"></label>
+      <button class="btn btn-quiet" id="export-btn" type="button">Export</button>
+      <label class="btn btn-quiet import-label" for="import-input">
+        Import
+        <input class="file-input" id="import-input" type="file" accept="application/json,.json">
+      </label>
     </div>
   </div>
-  <div class="toolbar-row toolbar-row-2">
-    <div class="chips" id="kind-chips" role="group" aria-label="Filter trophies by kind"></div>
-    <button id="missable-toggle" class="chip chip-miss" type="button" aria-pressed="false">Missable <span class="chip-n" id="missable-count">12</span></button>
-    <button id="clear-filters" class="link-btn" type="button">Clear filters</button>
+  <div class="toolbar-row toolbar-sub">
+    <div class="chips" id="kind-chips" role="group" aria-label="Filter by trophy kind"></div>
+    <button class="chip chip-missable" id="missable-toggle" type="button" aria-pressed="false">
+      Missable <span class="chip-n" id="missable-count">12</span>
+    </button>
+    <button class="link-btn" id="clear-filters" type="button">Clear filters</button>
+    <p class="keys-hint" aria-hidden="true"><kbd>/</kbd> search <span>·</span> <kbd>j</kbd><kbd>k</kbd> move <span>·</span> <kbd>e</kbd> earn <span>·</span> <kbd>s</kbd> shield</p>
   </div>
 </section>
 
-<main id="main">
-  <section class="view" id="view-checklist" aria-label="Trophy checklist">
+<main id="main" tabindex="-1">
+  <section class="view" id="view-checklist" aria-label="Checklist">
     <div class="split">
-      <section class="list-pane" aria-label="The 55 trophies">
+      <section class="list-pane" aria-labelledby="list-title">
         <div class="list-head">
-          <div>
-            <h2 class="list-title" id="list-title">All 55 trophies</h2>
-            <p class="list-sub" id="list-sub">Official PlayStation 5 list · 1 platinum, 2 gold, 6 silver, 46 bronze</p>
+          <div class="list-heading">
+            <h2 id="list-title">All 55 trophies</h2>
+            <p class="list-sub" id="list-sub"></p>
           </div>
-          <span class="list-count" id="list-count"></span>
+          <div class="list-head-side">
+            <span class="shield-chip" id="shield-chip" hidden>Shield on</span>
+            <span class="list-count" id="list-count"></span>
+            <span class="list-progress" aria-hidden="true"><span id="list-progress-fill"></span></span>
+          </div>
         </div>
         <ul class="trophy-list" id="trophy-list"></ul>
       </section>
@@ -79,12 +97,14 @@
     </div>
   </section>
 
-  <section class="view" id="view-roadmap" aria-label="Roadmap to the platinum" hidden></section>
-  <section class="view" id="view-missables" aria-label="Missable trophies" hidden></section>
-  <section class="view" id="view-method" aria-label="How this guide is built" hidden></section>
+  <section class="view page-view" id="view-roadmap" aria-label="Roadmap" hidden></section>
+  <section class="view page-view" id="view-missables" aria-label="Missable trophies" hidden></section>
+  <section class="view page-view" id="view-method" aria-label="Method" hidden></section>
 </main>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="sr-only" id="live" role="status" aria-live="polite"></div>
+
 <script type="module" src="app.js"></script>
 </body>
 </html>

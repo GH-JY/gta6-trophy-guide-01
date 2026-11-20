@@ -1,57 +1,67 @@
-// The named sources every guide cites. Links open only when a reader follows one; the app itself never fetches them.
+// The reference desk. Every guide cites at least two of these by short name, and the app only ever renders
+// them as text and links: nothing here is fetched at runtime.
 export const SOURCES = {
   ps: {
-    name: 'PlayStation official list',
+    name: 'PlayStation official game page',
     short: 'PlayStation',
     url: 'https://www.playstation.com/en-us/games/grand-theft-auto-vi/',
-    role: 'Official name, description and grade for all 55 trophies.',
+    role: 'Official trophy names, descriptions and grades: the fixed text every entry quotes.',
+    official: true,
   },
   ex: {
     name: 'Exophase trophy list',
     short: 'Exophase',
-    url: 'https://exophase.com/',
-    role: 'Trophy counts and rarity for the counted trophies.',
+    url: 'https://exophase.com/game/grand-theft-auto-vi-ps5/trophies/',
+    role: 'Counts, grades and rarity at a glance; useful for sanity-checking the counted trophies.',
   },
   psnp: {
-    name: 'PSNProfiles roadmap guide',
+    name: 'PSNProfiles trophy guides',
     short: 'PSNProfiles',
     url: 'https://psnprofiles.com/',
-    role: 'Roadmap order, difficulty framing and missable-window conventions.',
+    role: 'Community roadmaps and cleanup order, especially the pre-finale manual save habit.',
   },
   pp: {
     name: 'PowerPyx trophy guide',
     short: 'PowerPyx',
     url: 'https://www.powerpyx.com/',
-    role: 'Mission order and step-by-step routes for the story and activities.',
+    role: 'Mission-by-mission walkthroughs and reliable routes for the skill-based bronzes.',
   },
   ign: {
     name: 'IGN GTA VI wiki',
-    short: 'IGN wiki',
+    short: 'IGN',
     url: 'https://www.ign.com/wikis/gta-6',
-    role: 'Map, collectible and activity locations.',
+    role: 'Map-based collectible and activity locations, area lists and district notes.',
   },
   gr: {
     name: 'Game Rant guides',
     short: 'Game Rant',
     url: 'https://gamerant.com/',
-    role: 'Feature tips and the flavour trophies.',
+    role: 'Plain-language explainers for the cryptic and one-off trophies.',
   },
   reddit: {
-    name: 'r/GTA6 community threads',
+    name: 'r/GTA6 community',
     short: 'r/GTA6',
     url: 'https://www.reddit.com/r/GTA6/',
-    role: 'Community verification of trigger conditions.',
+    role: 'Player-verified trigger details and post-launch corrections to the route.',
   },
   yt: {
-    name: 'YouTube walkthroughs',
+    name: 'YouTube route videos',
     short: 'YouTube',
     url: 'https://www.youtube.com/',
-    role: 'Video routes for the timed activity challenges.',
+    role: 'Timed routes and visual walkthroughs for stunt chains, races and robberies.',
   },
 };
 
+// Display order: official first, then the guide desks, then community.
 export const SOURCE_ORDER = ['ps', 'ex', 'psnp', 'pp', 'ign', 'gr', 'reddit', 'yt'];
 
-export function resolveSources(ids) {
-  return (ids ?? []).map((id) => SOURCES[id]).filter(Boolean);
+export function resolveSources(ids = []) {
+  const seen = new Set();
+  const out = [];
+  for (const id of [...SOURCE_ORDER, ...ids]) {
+    if (!ids.includes(id) || seen.has(id)) continue;
+    seen.add(id);
+    if (SOURCES[id]) out.push(SOURCES[id]);
+  }
+  return out;
 }

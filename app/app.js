@@ -1,348 +1,585 @@
-// Entry point: load the trophy list and roadmap, wire the toolbar and tabs, and keep every screen in sync with
-// the saved progress. A query string can pre-set a screen, filter, trophy, spoiler state and earned set, which is
-// how the screenshots are taken; the tracker itself always uses localStorage.
+// Entry module. Boots the static app, applies the URL screenshot mode, wires the controls, and keeps the
+// four views in sync with progress. No dependencies, no network beyond the two local JSON files.
 import {
+  EMPTY_FILTERS,
+  exportProgress,
+  isHiddenBySpoiler,
   loadState,
+  matchesFilters,
+  progressSummary,
+  readProgressFile,
   saveState,
   withEarned,
   withEarnedAll,
   withSpoiler,
-  progressSummary,
-  matchesFilters,
-  exportProgress,
-  readProgressFile,
 } from './state.js';
 import {
+  KIND_LABELS,
   el,
-  renderProgressChip,
-  renderList,
   renderDetail,
-  renderRoadmap,
-  renderMissables,
+  renderList,
   renderMethod,
+  renderMissables,
+  renderProgressChip,
+  renderRoadmap,
 } from './render.js';
 
-const KIND_FILTERS = [
-  { id: 'all', label: 'All' },
-  { id: 'story', label: 'Story' },
-  { id: 'side', label: 'Side' },
-  { id: 'collectible', label: 'Collectibles' },
-  { id: 'activity', label: 'Activities' },
-  { id: 'challenge', label: 'Challenges' },
-  { id: 'freeplay', label: 'Free play' },
-];
+const KIND_FILTERS = ['all', ...Object.keys(KIND_LABELS)];
+const GRADES = ['all', 'platinum', 'gold', 'silver', 'bronze'];
+const VIEWS = ['checklist', 'roadmap', 'missables', 'method'];
 
 const app = {
   trophies: [],
   roadmap: null,
   progress: loadState(),
-  filters: { kind: 'all', grade: 'all', missableOnly: false, query: '', hideEarned: false },
+  filters: { ...EMPTY_FILTERS },
   view: 'checklist',
   selectedId: null,
+  scrollHints: { window: null, list: null },
 };
 
 const refs = {
-  progressChip: document.getElementById('progress-chip'),
-  search: document.getElementById('search'),
-  grade: document.getElementById('grade-filter'),
-  spoiler: document.getElementById('spoiler-toggle'),
-  kindChips: document.getElementById('kind-chips'),
-  missableToggle: document.getElementById('missable-toggle'),
-  missableCount: document.getElementById('missable-count'),
-  clear: document.getElementById('clear-filters'),
-  exportBtn: document.getElementById('export-btn'),
-  importInput: document.getElementById('import-input'),
-  list: document.getElementById('trophy-list'),
-  listTitle: document.getElementById('list-title'),
-  listSub: document.getElementById('list-sub'),
-  listCount: document.getElementById('list-count'),
-  detail: document.getElementById('detail'),
-  views: {
-    checklist: document.getElementById('view-checklist'),
-    roadmap: document.getElementById('view-roadmap'),
-    missables: document.getElementById('view-missables'),
-    method: document.getElementById('view-method'),
-  },
   tabs: [...document.querySelectorAll('.tab')],
-  toast: document.getElementById('toast'),
+  views: {
+    checklist: byId('view-checklist'),
+    roadmap: byId('view-roadmap'),
+    missables: byId('view-missables'),
+    method: byId('view-method'),
+  },
+  progressChip: byId('progress-chip'),
+  shieldChip: byId('shield-chip'),
+  search: byId('search'),
+  grade: byId('grade-filter'),
+  hideEarned: byId('hide-earned'),
+  spoiler: byId('spoiler-toggle'),
+  exportBtn: byId('export-btn'),
+  importInput: byId('import-input'),
+  chips: byId('kind-chips'),
+  missableToggle: byId('missable-toggle'),
+  missableCount: byId('missable-count'),
+  clearFilters: byId('clear-filters'),
+  listTitle: byId('list-title'),
+  listSub: byId('list-sub'),
+  listCount: byId('list-count'),
+  listProgress: byId('list-progress-fill'),
+  list: byId('trophy-list'),
+  detail: byId('detail'),
+  toast: byId('toast'),
+  live: byId('live'),
 };
+
+let toastTimer = 0;
+let announceTimer = 0;
 
 boot();
 
 async function boot() {
   try {
-    const [doc, roadmap] = await Promise.all([getJson('data/trophies.json'), getJson('data/roadmap.json')]);
-    app.trophies = doc.trophies;
+    const [trophyDoc, roadmap] = await Promise.all([fetchJson('data/trophies.json'), fetchJson('data/roadmap.json')]);
+    validateData(trophyDoc, roadmap);
+    app.trophies = trophyDoc.trophies;
     app.roadmap = roadmap;
-    applyQuery();
-    wire();
-    if (app.selectedId === null) app.selectedId = visibleTrophies()[0]?.id ?? app.trophies[0]?.id ?? null;
-    setView(app.view, { keepScroll: true });
-    renderAll();
-    applyScrollHints();
-    revealSelection();
   } catch (error) {
-    refs.list.replaceChildren(el('li', { class: 'empty', text: `The guide data could not be loaded: ${error.message}` }));
+    fatal(error);
+    return;
   }
+
+  applyQuery();
+  wire();
+  syncControls();
+  setView(app.view, { keepScroll: true });
+  keepSelectionVisible();
+  renderAll();
+  settleInitialView();
 }
 
-function revealSelection() {
-  if (app.selectedId === null) return;
-  requestAnimationFrame(() => {
-    const row = refs.list.querySelector(`[data-id="${app.selectedId}"]`);
-    row?.scrollIntoView({ block: 'nearest' });
-  });
-}
-
-async function getJson(path) {
+async function fetchJson(path) {
   const response = await fetch(path);
-  if (!response.ok) throw new Error(`${path} returned ${response.status}`);
+  if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`);
   return response.json();
 }
 
+function byId(id) {
+  return document.getElementById(id);
+}
+
+function validateData(doc, roadmap) {
+  if (!doc || !Array.isArray(doc.trophies) || doc.trophies.length === 0) {
+    throw new Error('data/trophies.json has no trophy array');
+  }
+  if (!roadmap || !Array.isArray(roadmap.stages) || roadmap.stages.length === 0) {
+    throw new Error('data/roadmap.json has no stage list');
+  }
+  const stageIds = new Set(roadmap.stages.map((stage) => stage.id));
+  const ids = new Set();
+  for (const [index, trophy] of doc.trophies.entries()) {
+    const where = `trophy ${index + 1}`;
+    if (!Number.isInteger(trophy.id) || ids.has(trophy.id)) throw new Error(`${where} has a missing or duplicate id`);
+    ids.add(trophy.id);
+    if (!trophy.name || !trophy.description || !trophy.guide) throw new Error(`${where} is missing official or guide text`);
+    if (!GRADES.includes(trophy.grade) || trophy.grade === 'all') throw new Error(`${where} has an unknown grade`);
+    if (!KIND_LABELS[trophy.kind]) throw new Error(`${where} has an unknown kind`);
+    if (!Array.isArray(trophy.sources) || trophy.sources.length < 2) throw new Error(`${where} cites fewer than two sources`);
+    if (!stageIds.has(trophy.stage)) throw new Error(`${where} points at a stage that does not exist`);
+    if (trophy.missable !== null) {
+      const m = trophy.missable;
+      if (!m || !m.when || !m.why || !m.order) throw new Error(`${where} has an incomplete missable window`);
+    }
+  }
+}
+
+function fatal(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  document.body.dataset.view = 'checklist';
+  refs.views.checklist.hidden = false;
+  refs.views.roadmap.hidden = true;
+  refs.views.missables.hidden = true;
+  refs.views.method.hidden = true;
+  refs.views.checklist.replaceChildren(
+    el(
+      'div',
+      { class: 'fatal' },
+      el('p', { class: 'eyebrow', text: 'The ledger could not open' }),
+      el('h2', { text: 'The trophy data did not load.' }),
+      el('p', { text: message }),
+      el('p', { class: 'fatal-note', text: 'Serve the folder with app/ at its root and reload. This page needs no network, but it does need its two local JSON files.' }),
+    ),
+  );
+  console.error(error);
+}
+
 function applyQuery() {
-  const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(location.search);
+  const validIds = new Set(app.trophies.map((t) => t.id));
+
   if (params.has('earned')) {
-    const ids = params.get('earned').split(',').map((n) => Number(n.trim())).filter(Number.isInteger);
+    const ids = params
+      .get('earned')
+      .split(',')
+      .map((value) => Number.parseInt(value, 10))
+      .filter((id) => validIds.has(id));
     app.progress = withEarnedAll(app.progress, ids);
     saveState(app.progress);
   }
-  if (params.get('spoiler') === '1') app.progress = withSpoiler(app.progress, true);
-  if (params.get('spoiler') === '0') app.progress = withSpoiler(app.progress, false);
+
+  const spoiler = params.get('spoiler');
+  if (spoiler === '1' || spoiler === 'true') app.progress = withSpoiler(app.progress, true);
+  else if (spoiler === '0' || spoiler === 'false') app.progress = withSpoiler(app.progress, false);
+
   const kind = params.get('kind') ?? params.get('filter');
-  if (kind && KIND_FILTERS.some((k) => k.id === kind)) app.filters.kind = kind;
   if (kind === 'missable') {
     app.filters.kind = 'all';
     app.filters.missableOnly = true;
+  } else if (KIND_FILTERS.includes(kind)) {
+    app.filters.kind = kind;
   }
+
   if (params.get('missable') === '1') app.filters.missableOnly = true;
-  const grade = params.get('grade');
-  if (grade && ['platinum', 'gold', 'silver', 'bronze'].includes(grade)) app.filters.grade = grade;
-  app.filters.query = params.get('q') ?? '';
-  const trophy = Number(params.get('trophy'));
-  if (Number.isInteger(trophy) && app.trophies.some((t) => t.id === trophy)) app.selectedId = trophy;
+  if (GRADES.includes(params.get('grade'))) app.filters.grade = params.get('grade');
+  if (params.get('q')) app.filters.query = params.get('q');
+  if (params.get('hideearned') === '1') app.filters.hideEarned = true;
+
+  const trophyId = Number.parseInt(params.get('trophy') ?? '', 10);
+  if (validIds.has(trophyId)) app.selectedId = trophyId;
+
   const view = params.get('view');
-  if (view && Object.hasOwn(refs.views, view)) app.view = view;
-  syncControls();
+  if (VIEWS.includes(view)) app.view = view;
+
+  app.scrollHints.window = intParam(params.get('scroll'));
+  app.scrollHints.list = intParam(params.get('listscroll'));
+}
+
+function intParam(value) {
+  if (value === null || value === '') return null;
+  const number = Number.parseInt(value, 10);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function settleInitialView() {
+  requestAnimationFrame(() => {
+    if (app.scrollHints.list !== null) refs.list.scrollTop = app.scrollHints.list;
+    else revealSelection();
+    if (app.scrollHints.window !== null) window.scrollTo(0, app.scrollHints.window);
+  });
 }
 
 function syncControls() {
   refs.search.value = app.filters.query;
   refs.grade.value = app.filters.grade;
+  refs.hideEarned.checked = app.filters.hideEarned;
   refs.spoiler.checked = app.progress.spoiler;
+  refs.missableToggle.classList.toggle('is-on', app.filters.missableOnly);
   refs.missableToggle.setAttribute('aria-pressed', String(app.filters.missableOnly));
 }
 
 function wire() {
-  for (const tab of refs.tabs) tab.addEventListener('click', () => setView(tab.dataset.view));
+  for (const tab of refs.tabs) {
+    tab.addEventListener('click', () => setView(tab.dataset.view));
+  }
   refs.search.addEventListener('input', () => {
     app.filters.query = refs.search.value.trim();
-    keepSelectionVisible();
-    renderAll();
+    onFilterChange();
   });
   refs.grade.addEventListener('change', () => {
     app.filters.grade = refs.grade.value;
-    keepSelectionVisible();
-    renderAll();
+    onFilterChange();
   });
-  refs.spoiler.addEventListener('change', () => {
-    app.progress = withSpoiler(app.progress, refs.spoiler.checked);
-    saveState(app.progress);
-    renderAll();
+  refs.hideEarned.addEventListener('change', () => {
+    app.filters.hideEarned = refs.hideEarned.checked;
+    onFilterChange();
   });
+  refs.spoiler.addEventListener('change', () => setSpoiler(refs.spoiler.checked));
   refs.missableToggle.addEventListener('click', () => {
     app.filters.missableOnly = !app.filters.missableOnly;
-    refs.missableToggle.setAttribute('aria-pressed', String(app.filters.missableOnly));
-    keepSelectionVisible();
-    renderAll();
-  });
-  refs.clear.addEventListener('click', () => {
-    app.filters = { kind: 'all', grade: 'all', missableOnly: false, query: '', hideEarned: false };
     syncControls();
-    keepSelectionVisible();
-    renderAll();
+    onFilterChange();
   });
+  refs.clearFilters.addEventListener('click', clearFilters);
   refs.exportBtn.addEventListener('click', () => {
     const count = exportProgress(app.trophies, app.progress.earned);
-    showToast(`Exported ${count} earned ${count === 1 ? 'trophy' : 'trophies'} to leonida-ledger-progress.json`);
+    showToast(`Exported ${count} earned ${count === 1 ? 'trophy' : 'trophies'} to leonida-ledger-progress.json.`);
   });
-  refs.importInput.addEventListener('change', async () => {
-    const file = refs.importInput.files?.[0];
-    if (!file) return;
-    try {
-      const ids = await readProgressFile(file, app.trophies);
-      app.progress = withEarnedAll(app.progress, ids);
-      saveState(app.progress);
-      renderAll();
-      showToast(`Imported ${ids.size} earned ${ids.size === 1 ? 'trophy' : 'trophies'}.`);
-    } catch (error) {
-      showToast(`Import failed: ${error.message}`);
-    } finally {
-      refs.importInput.value = '';
-    }
-  });
+  refs.importInput.addEventListener('change', handleImport);
+  document.addEventListener('keydown', onKeydown);
 }
 
 function setView(view, options = {}) {
-  if (!Object.hasOwn(refs.views, view)) return;
+  if (!VIEWS.includes(view)) return;
   app.view = view;
   document.body.dataset.view = view;
-  for (const [name, section] of Object.entries(refs.views)) {
-    if (name === 'method') continue;
-    section.hidden = name !== view;
-  }
-  refs.views.method.hidden = view !== 'method';
+  for (const name of VIEWS) refs.views[name].hidden = name !== view;
   for (const tab of refs.tabs) {
     const active = tab.dataset.view === view;
     tab.classList.toggle('is-active', active);
-    tab.setAttribute('aria-current', active ? 'page' : 'false');
+    if (active) tab.setAttribute('aria-current', 'page');
+    else tab.removeAttribute('aria-current');
   }
-  if (view === 'roadmap') renderRoadmap(refs.views.roadmap, roadmapContext());
-  if (view === 'missables') renderMissables(refs.views.missables, missablesContext());
-  if (view === 'method') renderMethod(refs.views.method);
-  if (!options.keepScroll && view !== 'checklist') refs.views[view].scrollTop = 0;
+  if (view === 'roadmap') {
+    renderRoadmap(refs.views.roadmap, {
+      roadmap: app.roadmap,
+      stages: app.roadmap.stages,
+      trophies: app.trophies,
+      state: app.progress,
+      selectedId: app.selectedId,
+      onSelect: (id) => openTrophy(id, { ensureVisible: true }),
+    });
+  } else if (view === 'missables') {
+    renderMissables(refs.views.missables, {
+      trophies: app.trophies,
+      stages: app.roadmap.stages,
+      state: app.progress,
+      selectedId: app.selectedId,
+      onSelect: (id) => openTrophy(id, { ensureVisible: true }),
+    });
+  } else if (view === 'method') {
+    renderMethod(refs.views.method);
+  }
+  if (!options.keepScroll) window.scrollTo(0, 0);
 }
 
 function visibleTrophies() {
-  return app.trophies.filter((t) => matchesFilters(t, app.filters, app.progress));
+  return app.trophies.filter((trophy) => matchesFilters(trophy, app.filters, app.progress));
 }
 
 function keepSelectionVisible() {
   const visible = visibleTrophies();
-  if (!visible.some((t) => t.id === app.selectedId)) app.selectedId = visible[0]?.id ?? null;
+  if (visible.length === 0) {
+    app.selectedId = null;
+    return;
+  }
+  if (!visible.some((trophy) => trophy.id === app.selectedId)) app.selectedId = visible[0].id;
 }
 
-function renderAll() {
+function onFilterChange() {
+  keepSelectionVisible();
+  renderAll({ resetList: true });
+  revealSelection();
+}
+
+function clearFilters() {
+  app.filters = { ...EMPTY_FILTERS };
+  syncControls();
+  onFilterChange();
+}
+
+function renderAll(options = {}) {
+  const active = document.activeElement instanceof Element ? document.activeElement : null;
+  const listFocus =
+    active && refs.list.contains(active)
+      ? {
+          id: active.closest('.trophy-row')?.dataset.id,
+          kind: active.classList.contains('tick') ? 'tick' : 'main',
+        }
+      : null;
+  const chipFocus = active?.classList.contains('chip') ? active.dataset.kind : null;
+  const detailHadFocus = Boolean(active && refs.detail.contains(active));
+  const listScroll = refs.list.scrollTop;
+  const detailScroll = refs.detail.scrollTop;
+
   const summary = progressSummary(app.trophies, app.progress.earned);
+  const visible = visibleTrophies();
+
   renderProgressChip(refs.progressChip, app.trophies, app.progress);
+  refs.shieldChip.hidden = !app.progress.spoiler;
   renderChips();
-  refs.missableCount.textContent = String(app.trophies.filter((t) => t.missable).length);
-  renderList(refs.list, listContext());
+  refs.missableCount.textContent = String(app.trophies.filter((trophy) => trophy.missable).length);
   refs.listTitle.textContent = listTitle();
-  refs.listSub.textContent = `${summary.done} of ${summary.total} earned · ${summary.percent}% · ${gradeBreakdown(summary)}`;
-  refs.listCount.textContent = `${visibleTrophies().length} shown`;
-  const selected = app.trophies.find((t) => t.id === app.selectedId) ?? null;
+  refs.listSub.textContent = gradeBreakdown(summary);
+  refs.listCount.textContent = `${visible.length} / ${summary.total}`;
+  refs.listProgress.style.width = `${summary.percent}%`;
+
+  renderList(refs.list, {
+    trophies: visible,
+    state: app.progress,
+    selectedId: app.selectedId,
+    onSelect: (id) => openTrophy(id),
+    onToggle: toggleTrophy,
+    onClear: clearFilters,
+  });
+
+  const selected = app.trophies.find((trophy) => trophy.id === app.selectedId) ?? null;
   renderDetail(refs.detail, {
     trophy: selected,
     state: app.progress,
     stages: app.roadmap.stages,
     onToggle: toggleTrophy,
-    onSpoilerOff: () => {
-      app.progress = withSpoiler(app.progress, false);
-      refs.spoiler.checked = false;
-      saveState(app.progress);
-      renderAll();
-    },
+    onSpoilerOff: () => setSpoiler(false),
     onOpenStage: openStage,
   });
-  if (app.view === 'roadmap') renderRoadmap(refs.views.roadmap, roadmapContext());
-  if (app.view === 'missables') renderMissables(refs.views.missables, missablesContext());
+
+  if (app.view === 'roadmap') {
+    renderRoadmap(refs.views.roadmap, {
+      roadmap: app.roadmap,
+      stages: app.roadmap.stages,
+      trophies: app.trophies,
+      state: app.progress,
+      selectedId: app.selectedId,
+      onSelect: (id) => openTrophy(id, { ensureVisible: true }),
+    });
+  } else if (app.view === 'missables') {
+    renderMissables(refs.views.missables, {
+      trophies: app.trophies,
+      stages: app.roadmap.stages,
+      state: app.progress,
+      selectedId: app.selectedId,
+      onSelect: (id) => openTrophy(id, { ensureVisible: true }),
+    });
+  }
+
+  refs.list.scrollTop = options.resetList ? 0 : listScroll;
+  refs.detail.scrollTop = detailScroll;
+
+  if (listFocus?.id) focusRow(listFocus.id, listFocus.kind);
+  else if (chipFocus) refs.chips.querySelector(`[data-kind="${chipFocus}"]`)?.focus({ preventScroll: true });
+  else if (detailHadFocus) refs.detail.querySelector('.detail-actions .btn')?.focus({ preventScroll: true });
 }
 
 function renderChips() {
-  const counts = new Map(KIND_FILTERS.map((k) => [k.id, k.id === 'all' ? app.trophies.length : app.trophies.filter((t) => t.kind === k.id).length]));
-  refs.kindChips.replaceChildren(
-    ...KIND_FILTERS.map((kind) => {
-      const active = app.filters.kind === kind.id;
-      return el(
-        'button',
-        {
-          class: `chip${active ? ' is-active' : ''}`,
-          type: 'button',
-          'aria-pressed': String(active),
-          onclick: () => {
-            app.filters.kind = kind.id;
-            keepSelectionVisible();
-            renderAll();
-          },
+  const buttons = KIND_FILTERS.map((kind) => {
+    const count = kind === 'all' ? app.trophies.length : app.trophies.filter((trophy) => trophy.kind === kind).length;
+    return el(
+      'button',
+      {
+        class: `chip${app.filters.kind === kind ? ' is-active' : ''}`,
+        type: 'button',
+        dataset: { kind },
+        'aria-pressed': String(app.filters.kind === kind),
+        onclick: () => {
+          app.filters.kind = kind;
+          onFilterChange();
         },
-        kind.label,
-        el('span', { class: 'chip-n', text: String(counts.get(kind.id)) }),
-      );
-    }),
-  );
+      },
+      el('span', { text: kind === 'all' ? 'All' : KIND_LABELS[kind] }),
+      el('span', { class: 'chip-n', text: String(count) }),
+    );
+  });
+  refs.chips.replaceChildren(...buttons);
 }
 
 function listTitle() {
-  if (app.filters.query) return `Results for “${app.filters.query}”`;
-  if (app.filters.missableOnly) return 'Missable trophies';
-  if (app.filters.kind === 'all') return app.filters.grade === 'all' ? 'All 55 trophies' : `${capitalize(app.filters.grade)} trophies`;
-  const label = KIND_FILTERS.find((k) => k.id === app.filters.kind)?.label ?? 'Trophies';
-  return app.filters.grade === 'all' ? `${label} trophies` : `${capitalize(app.filters.grade)} ${label.toLowerCase()}`;
+  const f = app.filters;
+  if (f.query && f.kind === 'all' && f.grade === 'all' && !f.missableOnly && !f.hideEarned) return `Results for “${f.query}”`;
+  if (f.query || f.grade !== 'all' || f.hideEarned) return 'Filtered trophies';
+  if (f.missableOnly) return 'Missable trophies';
+  if (f.kind !== 'all') return `${KIND_LABELS[f.kind]} trophies`;
+  return `All ${app.trophies.length} trophies`;
 }
 
 function gradeBreakdown(summary) {
-  return ['platinum', 'gold', 'silver', 'bronze']
-    .map((g) => `${summary.byGrade[g][0]}/${summary.byGrade[g][1]} ${g}`)
-    .join(' · ');
-}
-
-function listContext() {
-  return {
-    trophies: visibleTrophies(),
-    state: app.progress,
-    selectedId: app.selectedId,
-    onSelect: openTrophy,
-    onToggle: toggleTrophy,
-  };
-}
-
-function roadmapContext() {
-  return {
-    roadmap: app.roadmap,
-    stages: app.roadmap.stages,
-    trophies: app.trophies,
-    state: app.progress,
-    onSelect: openTrophy,
-  };
-}
-
-function missablesContext() {
-  return { trophies: app.trophies, state: app.progress, onSelect: openTrophy };
+  const g = summary.byGrade;
+  return `${summary.done}/${summary.total} earned · ${summary.percent}% · P ${g.platinum[0]}/${g.platinum[1]} · G ${g.gold[0]}/${g.gold[1]} · S ${g.silver[0]}/${g.silver[1]} · B ${g.bronze[0]}/${g.bronze[1]}`;
 }
 
 function toggleTrophy(id, earned) {
+  const trophy = app.trophies.find((t) => t.id === id);
+  if (!trophy) return;
   app.progress = withEarned(app.progress, id, earned);
   saveState(app.progress);
+  keepSelectionVisible();
   renderAll();
+  revealSelection();
+  const label = isHiddenBySpoiler(trophy, app.progress) ? 'Hidden story trophy' : trophy.name;
+  announce(`${label} ${earned ? 'marked earned' : 'no longer marked earned'}.`);
 }
 
-function openTrophy(id) {
+function openTrophy(id, options = {}) {
+  const trophy = app.trophies.find((t) => t.id === id);
+  if (!trophy) return;
+  if (options.ensureVisible && !matchesFilters(trophy, app.filters, app.progress)) {
+    app.filters = { ...EMPTY_FILTERS };
+    syncControls();
+  }
   app.selectedId = id;
   if (app.view !== 'checklist') setView('checklist');
+  keepSelectionVisible();
   renderAll();
-  requestAnimationFrame(() => {
-    const row = refs.list.querySelector(`[data-id="${id}"]`);
-    row?.scrollIntoView({ block: 'nearest' });
-  });
+  refs.detail.scrollTop = 0;
+  revealSelection();
+  if (options.focusList) focusRow(id, 'main');
 }
 
 function openStage(stageId) {
   setView('roadmap');
   requestAnimationFrame(() => {
-    const stage = refs.views.roadmap.querySelector(`[data-stage="${stageId}"]`);
-    stage?.scrollIntoView({ block: 'center' });
+    const card = refs.views.roadmap.querySelector(`.stage[data-stage="${stageId}"]`);
+    card?.scrollIntoView({ block: 'start' });
+    announce(`Roadmap stage ${stageId}.`);
   });
 }
 
+function revealSelection() {
+  if (app.view !== 'checklist' || app.selectedId === null) return;
+  const row = refs.list.querySelector(`.trophy-row[data-id="${app.selectedId}"]`);
+  row?.scrollIntoView({ block: 'nearest' });
+}
+
+function focusRow(id, part) {
+  const row = refs.list.querySelector(`.trophy-row[data-id="${id}"]`);
+  const target = part === 'tick' ? row?.querySelector('.tick') : row?.querySelector('.row-main');
+  target?.focus({ preventScroll: true });
+}
+
+function setSpoiler(value) {
+  app.progress = withSpoiler(app.progress, value);
+  saveState(app.progress);
+  refs.spoiler.checked = app.progress.spoiler;
+  keepSelectionVisible();
+  renderAll();
+  announce(app.progress.spoiler ? 'Spoiler shield on. Unearned story trophies are hidden.' : 'Spoiler shield off.');
+}
+
+function moveSelection(delta) {
+  const visible = visibleTrophies();
+  if (visible.length === 0) return;
+  let index = visible.findIndex((trophy) => trophy.id === app.selectedId);
+  if (index < 0) index = delta > 0 ? -1 : 0;
+  const nextIndex = (index + delta + visible.length) % visible.length;
+  const next = visible[nextIndex];
+  openTrophy(next.id, { focusList: true });
+  const hidden = isHiddenBySpoiler(next, app.progress);
+  const earned = app.progress.earned.has(next.id);
+  announce(`${nextIndex + 1} of ${visible.length}: ${hidden ? 'Hidden story trophy' : next.name}${earned ? ', earned' : ''}.`);
+}
+
+function onKeydown(event) {
+  const target = event.target;
+  const typing =
+    target instanceof Element &&
+    (target.matches('input[type="search"], input[type="text"], textarea, select') || target.isContentEditable);
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  if (event.key === '/' && !typing) {
+    event.preventDefault();
+    focusSearch();
+    return;
+  }
+  if (event.key === 'Escape') {
+    if (target === refs.search) {
+      if (refs.search.value) {
+        refs.search.value = '';
+        app.filters.query = '';
+        onFilterChange();
+      } else {
+        refs.search.blur();
+      }
+      event.preventDefault();
+      return;
+    }
+    if (refs.toast.classList.contains('is-on')) {
+      hideToast();
+      event.preventDefault();
+    }
+    return;
+  }
+  if (typing) return;
+
+  if (event.key === 's' || event.key === 'S') {
+    event.preventDefault();
+    setSpoiler(!app.progress.spoiler);
+    return;
+  }
+  if (event.key === '?') {
+    event.preventDefault();
+    setView('method');
+    return;
+  }
+  if (app.view !== 'checklist') return;
+
+  if (event.key === 'ArrowDown' || event.key === 'j' || event.key === 'J') {
+    event.preventDefault();
+    moveSelection(1);
+  } else if (event.key === 'ArrowUp' || event.key === 'k' || event.key === 'K') {
+    event.preventDefault();
+    moveSelection(-1);
+  } else if (event.key === 'e' || event.key === 'E') {
+    if (app.selectedId === null) return;
+    event.preventDefault();
+    toggleTrophy(app.selectedId, !app.progress.earned.has(app.selectedId));
+  }
+}
+
+function focusSearch() {
+  if (app.view !== 'checklist') setView('checklist');
+  requestAnimationFrame(() => {
+    refs.search.focus();
+    refs.search.select();
+  });
+}
+
+async function handleImport(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    const { ids, skipped } = await readProgressFile(file, app.trophies);
+    app.progress = withEarnedAll(app.progress, ids);
+    saveState(app.progress);
+    keepSelectionVisible();
+    renderAll();
+    const skippedNote = skipped ? `, ${skipped} skipped` : '';
+    showToast(`Imported ${ids.size} earned ${ids.size === 1 ? 'trophy' : 'trophies'}${skippedNote}. Current progress replaced.`);
+  } catch (error) {
+    showToast(`Import failed: ${error instanceof Error ? error.message : String(error)}.`);
+  } finally {
+    event.target.value = '';
+  }
+}
+
 function showToast(message) {
+  window.clearTimeout(toastTimer);
   refs.toast.textContent = message;
   refs.toast.classList.add('is-on');
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => refs.toast.classList.remove('is-on'), 3200);
+  toastTimer = window.setTimeout(hideToast, 3600);
 }
 
-function applyScrollHints() {
-  const params = new URLSearchParams(window.location.search);
-  const scroll = Number(params.get('scroll'));
-  if (Number.isFinite(scroll) && scroll > 0) {
-    const view = refs.views[app.view];
-    if (view) view.scrollTop = scroll;
-  }
-  const listScroll = Number(params.get('listscroll'));
-  if (Number.isFinite(listScroll) && listScroll > 0) refs.list.scrollTop = listScroll;
+function hideToast() {
+  window.clearTimeout(toastTimer);
+  refs.toast.classList.remove('is-on');
 }
 
-function capitalize(word) {
-  return word.charAt(0).toUpperCase() + word.slice(1);
+function announce(message) {
+  window.clearTimeout(announceTimer);
+  refs.live.textContent = '';
+  announceTimer = window.setTimeout(() => {
+    refs.live.textContent = message;
+  }, 60);
 }
